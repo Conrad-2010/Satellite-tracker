@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Global Live Satellite Tracker</title>
+  
+  <!-- CesiumJS CSS & JS -->
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+
+  <!-- satellite.js for SGP4 propagation calculations -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #ui-overlay {
+      position: absolute; top: 15px; left: 15px; z-index: 10;
+      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px);
+      color: #f8fafc; padding: 16px 20px; border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
+      max-width: 320px;
+    }
+    h2 { margin: 0 0 8px 0; font-size: 1.1rem; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
+    .status { font-size: 0.85rem; color: #94a3b8; margin-bottom: 12px; }
+    .stat-box { display: flex; justify-content: space-between; font-size: 0.9rem; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; }
+    .pulse { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
+  </style>
+</head>
+<body>
+
+  <div id="ui-overlay">
+    <h2><span class="pulse"></span> Live Satellite Tracker</h2>
+    <div class="status" id="status-text">Connecting to CelesTrak feed...</div>
+    <div class="stat-box">
+      <span>Tracked Satellites:</span>
+      <strong id="sat-count">0</strong>
+    </div>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script>
+    // Initialize Cesium Viewer with default OpenStreetMap imagery
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      imageryProvider: new Cesium.OpenStreetMapImageryProvider({
+        url: 'https://a.tile.openstreetmap.org/'
+      }),
+      baseLayerPicker: false,
+      geocoder: true,
+      timeline: false,
+      animation: false,
+      sceneModePicker: true,
+      navigationHelpButton: false
+    });
+
+    // Dark atmosphere and dark sky
+    viewer.scene.skyAtmosphere.show = true;
+    viewer.scene.globe.enableLighting = true;
+
+    const satEntities = new Map();
+    let tleDataList = [];
+
+    // CelesTrak active satellites feed (bright active group / ISS & Station constellations)
+    const CELESTRAK_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle';
+
+    async function fetchSatellites() {
+      try {
+        const response = await fetch(CELESTRAK_URL);
+        const text = await response.text();
+        parseTLE(text);
+      } catch (err) {
+        document.getElementById('status-text').innerText = 'Failed loading CelesTrak feed.';
+        console.error(err);
+      }
+    }
+
+    function parseTLE(rawText) {
+      const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      tleDataList = [];
+
+      // Parse 3 lines per satellite (Name, Line 1, Line 2)
+      for (let i = 0; i < lines.length - 2; i += 3) {
+        if (lines[i+1].startsWith('1 ') && lines[i+2].startsWith('2 ')) {
+          const satrec = satellite.twoline2satrec(lines[i+1], lines[i+2]);
+          tleDataList.push({
+            name: lines[i].replace(/^0\s+/, ''),
+            satrec: satrec
+          });
+        }
+      }
+
+      // Limit initial rendering to top 150 satellites for fluid rendering performance
+      const activeSubset = tleDataList.slice(0, 150);
+      document.getElementById('sat-count').innerText = activeSubset.length;
+      document.getElementById('status-text').innerText = 'Tracking satellites live';
+
+      initSatellites(activeSubset);
+    }
+
+    function initSatellites(satellites) {
+      const now = new Date();
+
+      satellites.forEach(sat => {
+        const positionAndVelocity = satellite.propagate(sat.satrec, now);
+        const positionEci = positionAndVelocity.position;
+
+        if (positionEci) {
+          const gmst = satellite.gstime(now);
+          const positionGd = satellite.eciToGeodetic(positionEci, gmst);
+
+          const longitude = satellite.degreesLong(positionGd.longitude);
+          const latitude = satellite.degreesLat(positionGd.latitude);
+          const height = positionGd.height * 1000; // convert km to meters
+
+          // Create Point Graphic on 3D Earth
+          const entity = viewer.entities.add({
+            name: sat.name,
+            position: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
+            point: {
+              pixelSize: 6,
+              color: Cesium.Color.CYAN,
+              outlineColor: Cesium.Color.WHITE,
+              outlineWidth: 1
+            },
+            label: {
+              text: sat.name,
+              font: '11px sans-serif',
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              outlineWidth: 2,
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              pixelOffset: new Cesium.Cartesian2(0, -9),
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 8000000)
+            }
+          });
+
+          satEntities.set(sat.name, sat.satrec);
+        }
+      });
+
+      // Update positions on every frame
+      viewer.scene.postUpdate.addEventListener(updatePositions);
+    }
+
+    function updatePositions() {
+      const now = new Date();
+      const gmst = satellite.gstime(now);
+
+      viewer.entities.values.forEach(entity => {
+        const satrec = satEntities.get(entity.name);
+        if (satrec) {
+          const positionAndVelocity = satellite.propagate(satrec, now);
+          const positionEci = positionAndVelocity.position;
+
+          if (positionEci) {
+            const positionGd = satellite.eciToGeodetic(positionEci, gmst);
+            const longitude = satellite.degreesLong(positionGd.longitude);
+            const latitude = satellite.degreesLat(positionGd.latitude);
+            const height = positionGd.height * 1000;
+
+            entity.position = Cesium.Cartesian3.fromDegrees(longitude, latitude, height);
+          }
+        }
+      });
+    }
+
+    fetchSatellites();
+  </script>
+</body>
+</html>
