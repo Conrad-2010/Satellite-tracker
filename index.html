@@ -9,139 +9,280 @@
   <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
 
-  <!-- satellite.js for SGP4 propagation calculations -->
+  <!-- satellite.js for SGP4 orbital propagation -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
 
   <style>
+    * { box-sizing: border-box; }
     html, body, #cesiumContainer {
       width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b0f19;
+      color: #e2e8f0;
     }
-    #ui-overlay {
-      position: absolute; top: 15px; left: 15px; z-index: 10;
-      background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px);
-      color: #f8fafc; padding: 16px 20px; border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);
-      max-width: 320px;
+    
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: #38bdf8; border-radius: 3px; }
+
+    /* Floating UI Container */
+    #ui-container {
+      position: absolute; top: 16px; left: 16px; z-index: 10;
+      width: 320px; max-height: calc(100vh - 32px);
+      display: flex; flex-direction: column; gap: 12px;
+      pointer-events: none;
     }
-    h2 { margin: 0 0 8px 0; font-size: 1.1rem; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
-    .status { font-size: 0.85rem; color: #94a3b8; margin-bottom: 12px; }
-    .stat-box { display: flex; justify-content: space-between; font-size: 0.9rem; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; }
-    .pulse { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #22c55e; }
+
+    .panel {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 16px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      pointer-events: auto;
+    }
+
+    h2 {
+      margin: 0 0 10px 0; font-size: 1.1rem; font-weight: 600;
+      color: #38bdf8; display: flex; align-items: center; justify-content: space-between;
+    }
+
+    .status-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.8rem; color: #94a3b8; font-weight: 400;
+    }
+    .pulse {
+      width: 8px; height: 8px; background: #22c55e;
+      border-radius: 50%; box-shadow: 0 0 8px #22c55e;
+      animation: pulse-anim 1.5s infinite;
+    }
+    @keyframes pulse-anim {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.1); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    /* Search & Filter Inputs */
+    .search-box {
+      width: 100%; padding: 8px 12px; border-radius: 8px;
+      background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff; font-size: 0.85rem; outline: none; transition: border-color 0.2s;
+    }
+    .search-box:focus { border-color: #38bdf8; }
+
+    /* Selected Satellite Telemetry Box */
+    #telemetry-panel { display: none; margin-top: 4px; }
+    .telemetry-row {
+      display: flex; justify-content: space-between; font-size: 0.82rem;
+      margin-bottom: 6px; color: #cbd5e1;
+    }
+    .telemetry-val { font-family: monospace; color: #38bdf8; font-weight: 600; }
+
+    .btn-action {
+      width: 100%; margin-top: 8px; padding: 8px; border-radius: 6px;
+      border: none; background: #0284c7; color: white; font-weight: 600;
+      font-size: 0.8rem; cursor: pointer; transition: background 0.2s;
+    }
+    .btn-action:hover { background: #0369a1; }
+
+    /* Map Layer Toggle Controls */
+    .toggle-group {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 0.82rem; color: #cbd5e1; margin-top: 8px;
+    }
+    .switch {
+      position: relative; display: inline-block; width: 34px; height: 18px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #334155; transition: .3s; border-radius: 18px;
+    }
+    .slider:before {
+      position: absolute; content: ""; height: 12px; width: 12px; left: 3px; bottom: 3px;
+      background-color: white; transition: .3s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #0284c7; }
+    input:checked + .slider:before { transform: translateX(16px); }
+
+    /* Satellite Search Results List */
+    #sat-list {
+      max-height: 180px; overflow-y: auto; margin-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 6px;
+    }
+    .sat-item {
+      padding: 6px 8px; font-size: 0.8rem; cursor: pointer; border-radius: 4px;
+      display: flex; justify-content: space-between; align-items: center;
+      transition: background 0.2s; color: #94a3b8;
+    }
+    .sat-item:hover { background: rgba(56, 189, 248, 0.15); color: #fff; }
   </style>
 </head>
 <body>
 
-  <div id="ui-overlay">
-    <h2><span class="pulse"></span> Live Satellite Tracker</h2>
-    <div class="status" id="status-text">Connecting to CelesTrak feed...</div>
-    <div class="stat-box">
-      <span>Tracked Satellites:</span>
-      <strong id="sat-count">0</strong>
+  <div id="ui-container">
+    <div class="panel">
+      <h2>
+        <span>Satellite Tracker</span>
+        <span class="status-badge"><span class="pulse"></span> LIVE</span>
+      </h2>
+      <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 10px;" id="status-text">
+        Fetching orbit data...
+      </div>
+
+      <input type="text" id="search" class="search-box" placeholder="Search satellites (e.g. ISS, STARLINK)..." oninput="filterSatellites()" />
+
+      <div class="toggle-group">
+        <span>Map Country/City Labels</span>
+        <label class="switch">
+          <input type="checkbox" id="toggle-labels" checked onchange="toggleLabels(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div id="sat-list"></div>
+    </div>
+
+    <!-- Active Telemetry Details -->
+    <div class="panel" id="telemetry-panel">
+      <div style="font-size: 0.9rem; font-weight: bold; color: #38bdf8; margin-bottom: 8px;" id="target-name">
+        No Satellite Selected
+      </div>
+      <div class="telemetry-row">
+        <span>Altitude:</span>
+        <span class="telemetry-val" id="target-alt">-- km</span>
+      </div>
+      <div class="telemetry-row">
+        <span>Velocity:</span>
+        <span class="telemetry-val" id="target-vel">-- km/s</span>
+      </div>
+      <div class="telemetry-row">
+        <span>Latitude:</span>
+        <span class="telemetry-val" id="target-lat">--°</span>
+      </div>
+      <div class="telemetry-row">
+        <span>Longitude:</span>
+        <span class="telemetry-val" id="target-lon">--°</span>
+      </div>
+      <button class="btn-action" onclick="trackSelectedSat()">Lock Camera to Satellite</button>
     </div>
   </div>
 
   <div id="cesiumContainer"></div>
 
   <script>
-    // Initialize Cesium Viewer with default OpenStreetMap imagery
+    // Initialize Cesium Viewer with ESRI High-Res Satellite Imagery
     const viewer = new Cesium.Viewer('cesiumContainer', {
-      imageryProvider: new Cesium.OpenStreetMapImageryProvider({
-        url: 'https://a.tile.openstreetmap.org/'
+      imageryProvider: new Cesium.UrlTemplateImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        maximumLevel: 19
       }),
       baseLayerPicker: false,
       geocoder: true,
       timeline: false,
       animation: false,
       sceneModePicker: true,
-      navigationHelpButton: false
+      navigationHelpButton: false,
+      infoBox: false
     });
 
-    // Dark atmosphere and dark sky
-    viewer.scene.skyAtmosphere.show = true;
+    // Add ESRI Reference Overlay layer for boundaries and place names
+    const labelLayer = viewer.imageryLayers.addImageryProvider(
+      new Cesium.UrlTemplateImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        maximumLevel: 19
+      })
+    );
+
+    function toggleLabels(enabled) {
+      labelLayer.show = enabled;
+    }
+
+    // Globe lighting settings
     viewer.scene.globe.enableLighting = true;
+    viewer.scene.skyAtmosphere.show = true;
 
-    const satEntities = new Map();
-    let tleDataList = [];
-
-    // CelesTrak active satellites feed (bright active group / ISS & Station constellations)
+    // CelesTrak Active Satellites Feed
     const CELESTRAK_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle';
 
-    async function fetchSatellites() {
+    const satMap = new Map();
+    let activeTarget = null;
+    let orbitPathEntity = null;
+
+    async function loadSatellites() {
       try {
         const response = await fetch(CELESTRAK_URL);
         const text = await response.text();
         parseTLE(text);
       } catch (err) {
-        document.getElementById('status-text').innerText = 'Failed loading CelesTrak feed.';
+        document.getElementById('status-text').innerText = 'Failed to fetch CelesTrak data.';
         console.error(err);
       }
     }
 
     function parseTLE(rawText) {
       const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      tleDataList = [];
+      let count = 0;
 
-      // Parse 3 lines per satellite (Name, Line 1, Line 2)
       for (let i = 0; i < lines.length - 2; i += 3) {
         if (lines[i+1].startsWith('1 ') && lines[i+2].startsWith('2 ')) {
+          const name = lines[i].replace(/^0\s+/, '').trim();
           const satrec = satellite.twoline2satrec(lines[i+1], lines[i+2]);
-          tleDataList.push({
-            name: lines[i].replace(/^0\s+/, ''),
-            satrec: satrec
+          
+          satMap.set(name, {
+            name: name,
+            satrec: satrec,
+            entity: null
           });
+
+          count++;
         }
       }
 
-      // Limit initial rendering to top 150 satellites for fluid rendering performance
-      const activeSubset = tleDataList.slice(0, 150);
-      document.getElementById('sat-count').innerText = activeSubset.length;
-      document.getElementById('status-text').innerText = 'Tracking satellites live';
-
-      initSatellites(activeSubset);
+      document.getElementById('status-text').innerText = `Tracking ${count} Active Satellites`;
+      initEntities();
+      filterSatellites();
     }
 
-    function initSatellites(satellites) {
+    function initEntities() {
       const now = new Date();
+      const gmst = satellite.gstime(now);
 
-      satellites.forEach(sat => {
+      satMap.forEach((sat, name) => {
         const positionAndVelocity = satellite.propagate(sat.satrec, now);
-        const positionEci = positionAndVelocity.position;
+        if (positionAndVelocity.position) {
+          const posGd = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
+          const lon = satellite.degreesLong(posGd.longitude);
+          const lat = satellite.degreesLat(posGd.latitude);
+          const height = posGd.height * 1000;
 
-        if (positionEci) {
-          const gmst = satellite.gstime(now);
-          const positionGd = satellite.eciToGeodetic(positionEci, gmst);
-
-          const longitude = satellite.degreesLong(positionGd.longitude);
-          const latitude = satellite.degreesLat(positionGd.latitude);
-          const height = positionGd.height * 1000; // convert km to meters
-
-          // Create Point Graphic on 3D Earth
           const entity = viewer.entities.add({
-            name: sat.name,
-            position: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
+            name: name,
+            position: Cesium.Cartesian3.fromDegrees(lon, lat, height),
             point: {
-              pixelSize: 6,
-              color: Cesium.Color.CYAN,
-              outlineColor: Cesium.Color.WHITE,
+              pixelSize: name.includes('ISS') || name.includes('TIANGONG') ? 8 : 5,
+              color: name.includes('ISS') ? Cesium.Color.YELLOW : Cesium.Color.CYAN,
+              outlineColor: Cesium.Color.BLACK,
               outlineWidth: 1
             },
             label: {
-              text: sat.name,
+              text: name,
               font: '11px sans-serif',
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
               outlineWidth: 2,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: new Cesium.Cartesian2(0, -9),
-              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 8000000)
+              pixelOffset: new Cesium.Cartesian2(0, -8),
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 5000000)
             }
           });
 
-          satEntities.set(sat.name, sat.satrec);
+          sat.entity = entity;
         }
       });
 
-      // Update positions on every frame
+      // Update positions live every tick
       viewer.scene.postUpdate.addEventListener(updatePositions);
     }
 
@@ -149,25 +290,119 @@
       const now = new Date();
       const gmst = satellite.gstime(now);
 
-      viewer.entities.values.forEach(entity => {
-        const satrec = satEntities.get(entity.name);
-        if (satrec) {
-          const positionAndVelocity = satellite.propagate(satrec, now);
-          const positionEci = positionAndVelocity.position;
+      satMap.forEach(sat => {
+        if (!sat.entity) return;
+        const posAndVel = satellite.propagate(sat.satrec, now);
 
-          if (positionEci) {
-            const positionGd = satellite.eciToGeodetic(positionEci, gmst);
-            const longitude = satellite.degreesLong(positionGd.longitude);
-            const latitude = satellite.degreesLat(positionGd.latitude);
-            const height = positionGd.height * 1000;
+        if (posAndVel.position) {
+          const posGd = satellite.eciToGeodetic(posAndVel.position, gmst);
+          const lon = satellite.degreesLong(posGd.longitude);
+          const lat = satellite.degreesLat(posGd.latitude);
+          const height = posGd.height * 1000;
 
-            entity.position = Cesium.Cartesian3.fromDegrees(longitude, latitude, height);
+          sat.entity.position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
+
+          // If current satellite is targeted, update telemetry panel UI
+          if (activeTarget && activeTarget.name === sat.name) {
+            document.getElementById('target-alt').innerText = (posGd.height).toFixed(1) + ' km';
+            document.getElementById('target-lat').innerText = lat.toFixed(2) + '°';
+            document.getElementById('target-lon').innerText = lon.toFixed(2) + '°';
+
+            if (posAndVel.velocity) {
+              const vx = posAndVel.velocity.x;
+              const vy = posAndVel.velocity.y;
+              const vz = posAndVel.velocity.z;
+              const vel = Math.sqrt(vx*vx + vy*vy + vz*vz);
+              document.getElementById('target-vel').innerText = vel.toFixed(2) + ' km/s';
+            }
           }
         }
       });
     }
 
-    fetchSatellites();
+    // Filter Satellites List based on Search Input
+    function filterSatellites() {
+      const query = document.getElementById('search').value.toUpperCase();
+      const listContainer = document.getElementById('sat-list');
+      listContainer.innerHTML = '';
+
+      let matches = 0;
+      satMap.forEach((sat, name) => {
+        if (matches >= 25) return; // Limit search list rendering for performance
+        if (name.toUpperCase().includes(query)) {
+          const item = document.createElement('div');
+          item.className = 'sat-item';
+          item.innerHTML = `<span>${name}</span>`;
+          item.onclick = () => selectSatellite(name);
+          listContainer.appendChild(item);
+          matches++;
+        }
+      });
+    }
+
+    // Select satellite and draw predicted ground orbit path
+    function selectSatellite(name) {
+      const sat = satMap.get(name);
+      if (!sat) return;
+
+      activeTarget = sat;
+      document.getElementById('telemetry-panel').style.display = 'block';
+      document.getElementById('target-name').innerText = sat.name;
+
+      drawOrbit(sat);
+      trackSelectedSat();
+    }
+
+    function trackSelectedSat() {
+      if (activeTarget && activeTarget.entity) {
+        viewer.trackedEntity = activeTarget.entity;
+      }
+    }
+
+    // Draw projected 90-minute orbit line for active selection
+    function drawOrbit(sat) {
+      if (orbitPathEntity) {
+        viewer.entities.remove(orbitPathEntity);
+      }
+
+      const positions = [];
+      const now = new Date();
+
+      // Sample 90 minutes into the future
+      for (let i = 0; i <= 90; i += 1) {
+        const time = new Date(now.getTime() + i * 60000);
+        const gmst = satellite.gstime(time);
+        const posAndVel = satellite.propagate(sat.satrec, time);
+
+        if (posAndVel.position) {
+          const posGd = satellite.eciToGeodetic(posAndVel.position, gmst);
+          const lon = satellite.degreesLong(posGd.longitude);
+          const lat = satellite.degreesLat(posGd.latitude);
+          const height = posGd.height * 1000;
+          positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, height));
+        }
+      }
+
+      orbitPathEntity = viewer.entities.add({
+        polyline: {
+          positions: positions,
+          width: 2,
+          material: Cesium.Color.SKYBLUE.withAlpha(0.6)
+        }
+      });
+    }
+
+    // Handle clicks directly on globe entities
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(function (click) {
+      const pickedObject = viewer.scene.pick(click.position);
+      if (Cesium.defined(pickedObject) && pickedObject.id && satMap.has(pickedObject.id.name)) {
+        selectSatellite(pickedObject.id.name);
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // Initial load
+    loadSatellites();
   </script>
 </body>
 </html>
